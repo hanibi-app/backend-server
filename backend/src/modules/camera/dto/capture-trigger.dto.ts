@@ -7,13 +7,12 @@ export enum CaptureTriggerType {
 }
 
 export class CaptureTriggerDto {
-  @ApiPropertyOptional({
+  @ApiProperty({
     example: 'ETCOM-001',
-    description: '디바이스 고유 ID (URL 파라미터로도 받을 수 있으므로 선택사항)',
+    description: '디바이스 고유 ID',
   })
   @IsString()
-  @IsOptional()
-  deviceId?: string;
+  deviceId: string;
 
   @ApiProperty({
     enum: CaptureTriggerType,

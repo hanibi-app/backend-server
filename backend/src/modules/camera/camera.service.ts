@@ -4,6 +4,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawn } from 'child_process';
+import * as ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
+import type { Response } from 'express';
 import { DevicesService } from '../devices/devices.service';
 import { Device, DeviceConnectionStatus } from '../devices/entities/device.entity';
 import { CaptureTriggerDto, CaptureTriggerType } from './dto/capture-trigger.dto';
@@ -249,5 +252,287 @@ export class CameraService {
     return path.join(this.snapshotsBasePath, snapshot.device.deviceId, filename);
   }
 
+  async captureSnapshotFromStream(
+    deviceId: string,
+    triggerType: CaptureTriggerType,
+  ): Promise<SnapshotInfo> {
+    const device = await this.devicesService.findByDeviceId(deviceId);
+    if (!device || !device.rtspUrl) {
+      throw new NotFoundException(`deviceId=${deviceId} 카메라가 등록되지 않았습니다.`);
+    }
 
+    const rtspUrl = device.rtspUrl;
+    const timestamp = Date.now();
+    const snapshotId = `snapshot-${timestamp}`;
+    const capturedAt = new Date();
+
+    // 스냅샷 저장 경로 설정
+    const deviceDir = path.join(this.snapshotsBasePath, deviceId);
+    if (!fs.existsSync(deviceDir)) {
+      fs.mkdirSync(deviceDir, { recursive: true });
+      this.logger.log(`스냅샷 디렉토리 생성: ${deviceDir}`);
+    }
+
+    const filename = `${timestamp}.jpg`;
+    const filePath = path.join(deviceDir, filename);
+    const imageUrl = `/snapshots/${deviceId}/${filename}`;
+
+    // FFmpeg를 사용하여 RTSP 스트림에서 단일 프레임 캡처
+    return new Promise((resolve, reject) => {
+      const ffmpegPath = ffmpegInstaller.path;
+      const ffmpegArgs = [
+        '-rtsp_transport',
+        'tcp',
+        '-rtsp_flags',
+        'prefer_tcp',
+        '-stimeout',
+        '5000000',
+        '-i',
+        rtspUrl,
+        '-vframes',
+        '1',
+        '-q:v',
+        '2',
+        '-f',
+        'image2',
+        '-y',
+        filePath,
+      ];
+
+      const ffmpegProcess = spawn(ffmpegPath, ffmpegArgs);
+      let stderrOutput = '';
+
+      ffmpegProcess.stderr.on('data', (data: Buffer) => {
+        stderrOutput += data.toString();
+      });
+
+      ffmpegProcess.on('error', (err) => {
+        this.logger.error(`FFmpeg 프로세스 오류: ${err.message}`, err.stack);
+        reject(new BadRequestException(`스냅샷 캡처 실패: ${err.message}`));
+      });
+
+      ffmpegProcess.on('exit', async (code) => {
+        if (code !== 0) {
+          this.logger.error(`FFmpeg 종료 코드: ${code}, stderr: ${stderrOutput}`);
+          reject(
+            new BadRequestException(
+              `스냅샷 캡처 실패: FFmpeg 오류 (code=${code})\n${stderrOutput}`,
+            ),
+          );
+          return;
+        }
+
+        // 파일이 생성되었는지 확인
+        if (!fs.existsSync(filePath)) {
+          reject(new BadRequestException('스냅샷 파일이 생성되지 않았습니다.'));
+          return;
+        }
+
+        // DB에 스냅샷 저장
+        const snapshot = this.snapshotRepository.create({
+          snapshotId,
+          device,
+          snapshotType: triggerType as SnapshotTriggerType,
+          imageUrl,
+          capturedAt,
+          latencyMs: undefined,
+        });
+
+        await this.snapshotRepository.save(snapshot);
+
+        this.logger.log(
+          `RTSP 스트림에서 스냅샷 캡처 완료: deviceId=${deviceId}, trigger=${triggerType}, filePath=${filePath}`,
+        );
+
+        resolve({
+          snapshotId,
+          deviceId,
+          snapshotType: triggerType,
+          imageUrl,
+          capturedAt: capturedAt.toISOString(),
+          latencyMs: snapshot.latencyMs,
+        });
+      });
+    });
+  }
+
+  async testStreamConnection(deviceId: string): Promise<{ connected: boolean; message: string }> {
+    const device = await this.devicesService.findByDeviceId(deviceId);
+    if (!device || !device.rtspUrl) {
+      throw new NotFoundException(`deviceId=${deviceId} 카메라가 등록되지 않았습니다.`);
+    }
+
+    const rtspUrl = device.rtspUrl;
+
+    return new Promise((resolve) => {
+      const ffmpegPath = ffmpegInstaller.path;
+      const ffmpegArgs = [
+        '-rtsp_transport',
+        'tcp',
+        '-rtsp_flags',
+        'prefer_tcp',
+        '-stimeout',
+        '5000000',
+        '-i',
+        rtspUrl,
+        '-vframes',
+        '1',
+        '-f',
+        'null',
+        '-',
+      ];
+
+      const ffmpegProcess = spawn(ffmpegPath, ffmpegArgs);
+      let stderrOutput = '';
+      const timeout = setTimeout(() => {
+        ffmpegProcess.kill('SIGTERM');
+        setTimeout(() => {
+          ffmpegProcess.kill('SIGKILL');
+        }, 2000);
+        resolve({
+          connected: false,
+          message: 'RTSP 스트림 연결 타임아웃 (5초)',
+        });
+      }, 5000);
+
+      ffmpegProcess.stderr.on('data', (data: Buffer) => {
+        stderrOutput += data.toString();
+      });
+
+      ffmpegProcess.on('error', (err) => {
+        clearTimeout(timeout);
+        resolve({
+          connected: false,
+          message: `FFmpeg 프로세스 오류: ${err.message}`,
+        });
+      });
+
+      ffmpegProcess.on('exit', (code) => {
+        clearTimeout(timeout);
+        if (code === 0) {
+          resolve({
+            connected: true,
+            message: 'RTSP 스트림 연결 성공',
+          });
+        } else {
+          resolve({
+            connected: false,
+            message: `RTSP 스트림 연결 실패 (code=${code}): ${stderrOutput.substring(0, 200)}`,
+          });
+        }
+      });
+    });
+  }
+
+  async streamMJPEG(deviceId: string, res: Response): Promise<void> {
+    const device = await this.devicesService.findByDeviceId(deviceId);
+    if (!device || !device.rtspUrl) {
+      throw new NotFoundException(`deviceId=${deviceId} 카메라가 등록되지 않았습니다.`);
+    }
+
+    const rtspUrl = device.rtspUrl;
+
+    // HTTP 헤더 설정
+    res.setHeader('Content-Type', 'image/jpeg');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Connection', 'keep-alive');
+
+    const ffmpegPath = ffmpegInstaller.path;
+    const ffmpegArgs = [
+      '-rtsp_transport',
+      'tcp',
+      '-rtsp_flags',
+      'prefer_tcp',
+      '-stimeout',
+      '5000000',
+      '-i',
+      rtspUrl,
+      '-f',
+      'mjpeg',
+      '-vcodec',
+      'mjpeg',
+      '-q:v',
+      '5',
+      '-r',
+      '10',
+      '-vf',
+      'scale=1280:720',
+      '-an',
+      '-loglevel',
+      'warning',
+      '-fflags',
+      'nobuffer',
+      '-strict',
+      'experimental',
+      '-',
+    ];
+
+    const ffmpegProcess = spawn(ffmpegPath, ffmpegArgs);
+    let frameBuffer = Buffer.alloc(0);
+    const JPEG_MARKER = Buffer.from([0xff, 0xd8]);
+
+    ffmpegProcess.stdout.on('data', (chunk: Buffer) => {
+      frameBuffer = Buffer.concat([frameBuffer, chunk]);
+
+      // JPEG 프레임 경계 찾기
+      let markerIndex = frameBuffer.indexOf(JPEG_MARKER, 1);
+      while (markerIndex !== -1) {
+        const frame = frameBuffer.slice(0, markerIndex);
+        if (frame.length > 0) {
+          try {
+            res.write(frame);
+          } catch (err) {
+            this.logger.warn(`응답 쓰기 실패: ${err}`);
+            ffmpegProcess.kill('SIGTERM');
+            return;
+          }
+        }
+        frameBuffer = frameBuffer.slice(markerIndex);
+        markerIndex = frameBuffer.indexOf(JPEG_MARKER, 1);
+      }
+    });
+
+    ffmpegProcess.stderr.on('data', (data: Buffer) => {
+      const message = data.toString();
+      if (message.includes('error') || message.includes('Error')) {
+        this.logger.error(`FFmpeg stderr: ${message}`);
+      }
+    });
+
+    ffmpegProcess.on('error', (err) => {
+      this.logger.error(`FFmpeg 프로세스 오류: ${err.message}`, err.stack);
+      if (!res.headersSent) {
+        res.status(500).json({
+          success: false,
+          message: `스트림 오류: ${err.message}`,
+        });
+      }
+      ffmpegProcess.kill('SIGTERM');
+      setTimeout(() => {
+        ffmpegProcess.kill('SIGKILL');
+      }, 2000);
+    });
+
+    ffmpegProcess.on('exit', (code) => {
+      if (code !== 0 && code !== null) {
+        this.logger.warn(`FFmpeg 프로세스 종료: code=${code}, deviceId=${deviceId}`);
+      }
+      if (!res.headersSent) {
+        res.status(500).json({
+          success: false,
+          message: `스트림 종료: FFmpeg 프로세스가 종료되었습니다 (code=${code})`,
+        });
+      }
+    });
+
+    res.on('close', () => {
+      this.logger.log(`클라이언트 연결 종료: deviceId=${deviceId}`);
+      ffmpegProcess.kill('SIGTERM');
+      setTimeout(() => {
+        ffmpegProcess.kill('SIGKILL');
+      }, 2000);
+    });
+  }
 }

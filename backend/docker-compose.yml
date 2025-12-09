@@ -13,6 +13,8 @@ services:
     environment:
       # 개발 환경으로 오버라이드 (DB는 유지)
       - NODE_ENV=development
+    extra_hosts:
+      - "rtsp-camera:221.159.164.177"
     volumes:
       # 소스 코드를 마운트하여 핫리로드 가능
       - ./src:/app/src:ro
@@ -22,11 +24,16 @@ services:
       - /app/node_modules
       # snapshots 디렉토리를 호스트와 공유 (이미지 확인 및 백업용)
       - ./snapshots:/app/snapshots
+      # public 디렉토리를 마운트 (정적 파일 서빙용) - 읽기/쓰기 가능
+      - ./public:/app/public
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # 메모리 제한 설정 (OOM 방지)
+    mem_limit: 1.5g
+    mem_reservation: 512m
     restart: always
 
   postgres:
@@ -45,6 +52,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # 메모리 제한 설정 (OOM 방지)
+    mem_limit: 512m
+    mem_reservation: 256m
     restart: always
 
   redis:
@@ -59,4 +69,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # 메모리 제한 설정 (OOM 방지) 및 Redis 메모리 정책
+    command: redis-server --maxmemory 200mb --maxmemory-policy allkeys-lru
+    mem_limit: 256m
+    mem_reservation: 128m
     restart: always

@@ -9,20 +9,13 @@ import {
   Param,
   Post,
   Query,
-  Req,
   Res,
-  UploadedFile,
-  UseInterceptors,
-  UsePipes,
 } from '@nestjs/common';
-import type { Request, Response } from 'express';
-import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import {
   ApiBody,
-  ApiConsumes,
   ApiOperation,
   ApiParam,
-  ApiProperty,
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
@@ -32,16 +25,6 @@ import { CameraService } from './camera.service';
 import { CaptureTriggerDto } from './dto/capture-trigger.dto';
 import { RegisterCameraDto } from './dto/register-camera.dto';
 import { SnapshotQueryDto } from './dto/snapshot-query.dto';
-
-// Swagger에서 multipart/form-data 파일 업로드를 표시하기 위한 클래스
-class CaptureSnapshotDto extends CaptureTriggerDto {
-  @ApiProperty({
-    type: 'string',
-    format: 'binary',
-    description: '이미지 파일 (JPG 형식 권장) - 필수!',
-  })
-  image: any;
-}
 
 @ApiTags('Camera')
 @Controller({
@@ -113,37 +96,17 @@ export class CameraController {
     };
   }
 
-  @Post(':deviceId/stream')
+  @Get(':deviceId/stream')
   @ApiOperation({
     summary: 'RTSP 스트림 URL 조회',
     description: '디바이스의 RTSP 스트림 URL을 조회합니다.',
   })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        deviceId: {
-          type: 'string',
-          example: 'ETCOM-001',
-          description: '디바이스 고유 ID (URL 파라미터와 동일)',
-        },
-      },
-    },
-    description: '디바이스 ID',
-    examples: {
-      basic: {
-        summary: '기본 예시',
-        value: {
-          deviceId: 'ETCOM-001',
-        },
-      },
-    },
+  @ApiParam({
+    name: 'deviceId',
+    example: 'ETCOM-001',
+    description: '디바이스 고유 ID',
   })
-  async stream(
-    @Param('deviceId') deviceId: string,
-    @Body() body: { deviceId?: string },
-  ) {
-    // body의 deviceId는 무시하고 URL 파라미터 사용
+  async stream(@Param('deviceId') deviceId: string) {
     const data = await this.cameraService.getStreamUrl(deviceId);
     return {
       success: true,
@@ -151,52 +114,39 @@ export class CameraController {
     };
   }
 
-  @Post(':deviceId/capture')
-  @UseInterceptors(FileInterceptor('image'))
-  @UsePipes() // 전역 ValidationPipe 비활성화 (multipart/form-data는 수동 검증)
-  @ApiConsumes('multipart/form-data')
+  @Post('capture')
   @ApiOperation({
-    summary: '스냅샷 캡처 및 전송',
+    summary: '스냅샷 캡처 (서버에서 RTSP 스트림 직접 캡처)',
     description:
-      '하드웨어에서 캡처한 이미지를 받아서 저장합니다. ⚠️ 반드시 multipart/form-data 형식으로 요청하며, "image" 필드에 이미지 파일을 첨부해야 합니다.',
+      '하드웨어에서 이벤트를 전송하면 서버가 RTSP 스트림에서 직접 이미지를 캡처하여 저장합니다. JSON 형식으로 요청하며, body에 deviceId와 triggerType을 함께 전송합니다.',
   })
-  @ApiParam({
-    name: 'deviceId',
-    example: 'ETCOM-001',
-    description: '디바이스 고유 ID',
-  })
-    @ApiBody({
-      type: CaptureSnapshotDto,
-      description: '스냅샷 캡처 정보 및 이미지 파일',
-      examples: {
-        foodInputBefore: {
-          summary: '음식 투입 전 캡처 예시',
-          description: 'FOOD_INPUT_BEFORE: 음식 투입 전 자동 캡처 (서버에서 자동으로 시간 측정)',
-          value: {
-            triggerType: 'FOOD_INPUT_BEFORE',
-            image: '<binary file>',
-          },
-        },
-        foodInputAfter: {
-          summary: '음식 투입 후 캡처 예시',
-          description: 'FOOD_INPUT_AFTER: 음식 투입 후 자동 캡처 (서버에서 자동으로 시간 측정)',
-          value: {
-            triggerType: 'FOOD_INPUT_AFTER',
-            image: '<binary file>',
-          },
+  @ApiBody({
+    type: CaptureTriggerDto,
+    description: '스냅샷 캡처 이벤트 정보',
+    examples: {
+      foodInputBefore: {
+        summary: '음식 투입 전 캡처',
+        description: 'FOOD_INPUT_BEFORE: 음식 투입 전 자동 캡처 (서버에서 RTSP 스트림에서 직접 캡처)',
+        value: {
+          deviceId: 'ETCOM-001',
+          triggerType: 'FOOD_INPUT_BEFORE',
         },
       },
-    })
-  async capture(
-    @Param('deviceId') deviceId: string,
-    @Req() request: any,
-    @UploadedFile() image?: { buffer: Buffer; size: number; originalname: string },
-  ) {
-    // multipart/form-data에서 받은 body를 수동으로 파싱
-    // FileInterceptor가 body를 파싱하므로 request.body에서 직접 접근 가능
-    const body = request.body as any;
-    
+      foodInputAfter: {
+        summary: '음식 투입 후 캡처',
+        description: 'FOOD_INPUT_AFTER: 음식 투입 후 자동 캡처 (서버에서 RTSP 스트림에서 직접 캡처)',
+        value: {
+          deviceId: 'ETCOM-001',
+          triggerType: 'FOOD_INPUT_AFTER',
+        },
+      },
+    },
+  })
+  async capture(@Body() body: CaptureTriggerDto) {
     // 필수 필드 검증
+    if (!body || !body.deviceId) {
+      throw new BadRequestException('deviceId는 필수입니다.');
+    }
     if (!body || !body.triggerType) {
       throw new BadRequestException('triggerType은 필수입니다.');
     }
@@ -207,20 +157,11 @@ export class CameraController {
       throw new BadRequestException(`triggerType은 ${validTriggerTypes.join(', ')} 중 하나여야 합니다.`);
     }
 
-    // 이미지 파일 필수 검증
-    if (!image || !image.buffer || image.buffer.length === 0) {
-      throw new BadRequestException('이미지 파일은 필수입니다.');
-    }
-
-    const payload: CaptureTriggerDto = {
-      deviceId,
-      triggerType: body.triggerType as CaptureTriggerDto['triggerType'],
-    };
-
-    const data = await this.cameraService.captureSnapshot({
-      ...payload,
-      imageFile: image,
-    });
+    // 서버에서 RTSP 스트림을 직접 캡처
+    const data = await this.cameraService.captureSnapshotFromStream(
+      body.deviceId,
+      body.triggerType,
+    );
     return {
       success: true,
       data,
@@ -286,6 +227,41 @@ export class CameraController {
       success: true,
       data,
     };
+  }
+
+  @Post(':deviceId/test-stream')
+  @ApiOperation({
+    summary: 'RTSP 스트림 연결 테스트',
+    description: 'RTSP 스트림이 정상적으로 연결되는지 테스트합니다.',
+  })
+  @ApiParam({
+    name: 'deviceId',
+    example: 'ETCOM-001',
+    description: '디바이스 고유 ID',
+  })
+  async testStream(@Param('deviceId') deviceId: string) {
+    const data = await this.cameraService.testStreamConnection(deviceId);
+    return {
+      success: true,
+      data,
+    };
+  }
+
+  @Get(':deviceId/live-stream')
+  @ApiOperation({
+    summary: '실시간 스트리밍 (MJPEG)',
+    description:
+      'RTSP 스트림을 MJPEG 형식으로 실시간 전송합니다. 브라우저에서 직접 접근하여 실시간 영상을 볼 수 있습니다.',
+  })
+  @ApiParam({
+    name: 'deviceId',
+    example: 'ETCOM-001',
+    description: '디바이스 고유 ID',
+  })
+  async liveStream(@Param('deviceId') deviceId: string, @Res() res: Response) {
+    // @Res() 데코레이터를 사용하면 NestJS가 자동으로 응답을 처리하지 않으므로
+    // 서비스에서 직접 응답을 처리해야 합니다
+    await this.cameraService.streamMJPEG(deviceId, res);
   }
 
 }

@@ -50,6 +50,13 @@ export const buildTypeOrmConfig = (configService: ConfigService): TypeOrmModuleO
   // synchronize가 true일 때 로깅 활성화하여 스키마 변경 확인
   const shouldLogQueries = parsedSynchronize || parsedLogging;
 
+  // 데이터베이스 연결 풀 제한 (메모리 보호)
+  const extra = {
+    max: 10, // 최대 연결 수
+    min: 2, // 최소 연결 수
+    maxQueryExecutionTime: 5000, // 쿼리 타임아웃 5초
+  };
+
   if (url) {
     return {
       type: 'postgres',
@@ -57,6 +64,7 @@ export const buildTypeOrmConfig = (configService: ConfigService): TypeOrmModuleO
       autoLoadEntities: true,
       synchronize: parsedSynchronize,
       logging: shouldLogQueries ? ['query', 'error', 'schema'] : parsedLogging,
+      extra,
     };
   }
 
@@ -70,6 +78,7 @@ export const buildTypeOrmConfig = (configService: ConfigService): TypeOrmModuleO
     autoLoadEntities: true,
     synchronize: parsedSynchronize,
     logging: shouldLogQueries ? ['query', 'error', 'schema'] : parsedLogging,
+    extra,
   };
 };
 

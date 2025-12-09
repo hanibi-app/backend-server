@@ -44,6 +44,38 @@ export class DevicesService {
     return this.devicesRepository.save(device);
   }
 
+  async unpairDevice(user: User, deviceId: string): Promise<Device> {
+    const device = await this.devicesRepository.findOne({
+      where: { deviceId },
+      relations: ['user'],
+    });
+
+    if (!device) {
+      throw new NotFoundException('기기를 찾을 수 없습니다.');
+    }
+
+    if (!device.user || device.user.id !== user.id) {
+      throw new NotFoundException('소유하지 않은 기기입니다.');
+    }
+
+    // TypeORM에서 관계를 null로 설정하기 위해 update 사용
+    await this.devicesRepository.update(
+      { deviceId },
+      { user: null as any }, // TypeORM이 user_id를 null로 설정
+    );
+
+    // 업데이트된 기기 반환
+    const updatedDevice = await this.devicesRepository.findOne({
+      where: { deviceId },
+    });
+
+    if (!updatedDevice) {
+      throw new NotFoundException('기기를 찾을 수 없습니다.');
+    }
+
+    return updatedDevice;
+  }
+
   async findByDeviceId(deviceId: string): Promise<Device | null> {
     return this.devicesRepository.findOne({ where: { deviceId } });
   }

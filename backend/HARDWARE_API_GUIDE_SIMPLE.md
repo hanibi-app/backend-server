@@ -50,50 +50,46 @@
 
 ---
 
-## ■ 2단계: 스냅샷 캡처 및 전송 (캡처할 때마다)
+## ■ 2단계: 스냅샷 캡처 이벤트 전송 (캡처할 때마다)
 
-**⚠️ 중요**: `multipart/form-data` 형식으로 요청하며, **이미지 파일을 반드시 포함**해야 합니다.
+**✅ 중요**: 이제 하드웨어에서 이미지를 직접 전송할 필요가 없습니다. **JSON 형식으로 이벤트만 전송**하면 서버가 RTSP 스트림에서 직접 이미지를 캡처합니다.
 
 ### [API 정보]
 
 - **Method**: POST
-- **URL**: `http://43.200.77.84:3000/api/v1/cameras/{deviceId}/capture`
-- **Content-Type**: `multipart/form-data`
-
-### [URL 파라미터]
-
-- **{deviceId}**: 디바이스 ID (예: `ETCOM-001`)
+- **URL**: `http://43.200.77.84:3000/api/v1/cameras/capture`
+- **Content-Type**: `application/json`
 
 ### [요청 예시]
 
 **cURL 예시:**
 ```bash
-curl -X POST "http://43.200.77.84:3000/api/v1/cameras/ETCOM-001/capture" \
-  -F "triggerType=FOOD_INPUT_BEFORE" \
-  -F "image=@/path/to/image.jpg"
+curl -X POST "http://43.200.77.84:3000/api/v1/cameras/capture" \
+  -H "Content-Type: application/json" \
+  -d '{"deviceId": "ETCOM-001", "triggerType": "FOOD_INPUT_BEFORE"}'
 ```
 
 **Python 예시:**
 ```python
 import requests
 
-url = "http://43.200.77.84:3000/api/v1/cameras/ETCOM-001/capture"
-files = {
-    'image': ('image.jpg', open('image.jpg', 'rb'), 'image/jpeg')
-}
+url = "http://43.200.77.84:3000/api/v1/cameras/capture"
 data = {
-    'triggerType': 'FOOD_INPUT_BEFORE'
+    "deviceId": "ETCOM-001",
+    "triggerType": "FOOD_INPUT_BEFORE"
 }
-response = requests.post(url, files=files, data=data)
+response = requests.post(url, json=data)
 print(response.json())
 ```
 
 ### [필수 값]
 
+- **deviceId**: 디바이스 고유 ID (예: `ETCOM-001`)
 - **triggerType**: `FOOD_INPUT_BEFORE` (음식 투입 전) 또는 `FOOD_INPUT_AFTER` (음식 투입 후)
-- **image**: 이미지 파일 (JPG 형식 권장)
 
-**참고**: 캡처 시각은 서버에서 자동으로 측정됩니다. 하드웨어에서 시간을 보낼 필요가 없습니다.
+**참고**: 
+- 이미지 파일을 전송할 필요가 없습니다. 서버가 RTSP 스트림에서 직접 캡처합니다.
+- 캡처 시각은 서버에서 자동으로 측정됩니다.
 
 ### [성공 응답 예시]
 
@@ -192,17 +188,27 @@ http://43.200.77.84:3000/api/v1/cameras/ETCOM-001/snapshots/snapshot-17638420171
 ```json
 {
   "statusCode": 400,
+  "message": "deviceId는 필수입니다.",
+  "error": "Bad Request"
+}
+```
+
+또는
+
+```json
+{
+  "statusCode": 400,
   "message": "triggerType은 필수입니다.",
   "error": "Bad Request"
 }
 ```
 
-### [이미지 파일 누락]
+### [RTSP 스트림 캡처 실패]
 
 ```json
 {
   "statusCode": 400,
-  "message": "이미지 파일은 필수입니다.",
+  "message": "RTSP 스트림 캡처 실패: Connection timed out. 카메라 연결을 확인해주세요.",
   "error": "Bad Request"
 }
 ```
@@ -241,24 +247,27 @@ http://43.200.77.84:3000/api/v1/cameras/ETCOM-001/snapshots/snapshot-17638420171
 
 ## ■ 전체 흐름 요약
 
-1. **하드웨어 시작** → 카메라 등록 (최초 1회)
-2. **카메라에서 이미지 캡처** → 스냅샷 전송 (캡처할 때마다)
-3. **서버 응답 확인** → `snapshotId` 확인
-4. **이미지 확인** → 스냅샷 목록 조회 또는 이미지 URL로 직접 접근
+1. **하드웨어 시작** → 카메라 등록 (최초 1회, RTSP URL 포함)
+2. **이벤트 발생** → JSON으로 이벤트 전송 (캡처할 때마다)
+3. **서버 자동 캡처** → 서버가 RTSP 스트림에서 직접 이미지 캡처
+4. **서버 응답 확인** → `snapshotId` 확인
+5. **이미지 확인** → 스냅샷 목록 조회 또는 이미지 URL로 직접 접근
 
 ---
 
 ## ■ 주의사항
 
-1. **이미지 파일은 반드시 포함해야 합니다**
-   - `multipart/form-data` 형식으로 요청
-   - 파일 필드명은 `image`
-   - JPG 형식 권장
+1. **이미지 파일을 전송할 필요가 없습니다**
+   - JSON 형식으로 이벤트만 전송 (`triggerType`만 포함)
+   - 서버가 RTSP 스트림에서 직접 캡처합니다
 
-2. **캡처 시각은 서버에서 자동으로 측정됩니다**
+2. **카메라 등록 시 RTSP URL이 필수입니다**
+   - 등록 시 올바른 RTSP URL을 제공해야 서버에서 캡처가 가능합니다
+
+3. **캡처 시각은 서버에서 자동으로 측정됩니다**
    - 하드웨어에서 시간을 보낼 필요가 없습니다
 
-3. **인증이 필요 없습니다**
+4. **인증이 필요 없습니다**
    - JWT 토큰이나 API 키 불필요
 
 

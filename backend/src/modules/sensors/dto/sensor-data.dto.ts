@@ -43,11 +43,14 @@ export class SensorDataDto {
   sensorData: SensorValuesDto;
 
   @ApiProperty({
-    description: '현재 처리 상태',
+    description: '현재 처리 상태 (IDLE: 대기, PROCESSING: 처리 중, ERROR: 오류)',
     enum: ProcessingStatus,
     example: ProcessingStatus.Processing,
+    enumName: 'ProcessingStatus',
   })
-  @IsEnum(ProcessingStatus, { message: 'processingStatus 값이 올바르지 않습니다.' })
+  @IsEnum(ProcessingStatus, { 
+    message: 'processingStatus는 IDLE, PROCESSING, ERROR 중 하나여야 합니다. 작업 완료는 /api/v1/sensors/events API를 사용하세요.' 
+  })
   processingStatus: ProcessingStatus;
 
   @ApiProperty({

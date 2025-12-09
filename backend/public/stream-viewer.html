@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>실시간 카메라 스트림</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1280px;
+            width: 100%;
+            text-align: center;
+        }
+        h1 {
+            margin-bottom: 20px;
+            color: #4CAF50;
+        }
+        .stream-container {
+            position: relative;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            margin-bottom: 20px;
+        }
+        #streamImage {
+            width: 100%;
+            height: auto;
+            display: block;
+            max-height: 80vh;
+            object-fit: contain;
+        }
+        .status {
+            padding: 10px;
+            background: #2a2a2a;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .status.connected {
+            color: #4CAF50;
+        }
+        .status.error {
+            color: #f44336;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        button {
+            padding: 10px 20px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        .device-select {
+            padding: 10px;
+            margin-bottom: 20px;
+            background: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📹 실시간 카메라 스트림</h1>
+        
+        <div class="status" id="status">연결 중...</div>
+        
+        <div class="stream-container">
+            <img id="streamImage" src="" alt="스트림 로딩 중..." />
+        </div>
+        
+        <div class="controls">
+            <input type="text" id="deviceId" class="device-select" placeholder="디바이스 ID (예: test1)" value="test1" />
+            <button id="startBtn">스트림 시작</button>
+            <button id="stopBtn" disabled>스트림 중지</button>
+        </div>
+    </div>
+
+    <script>
+        let streamInterval = null;
+        let currentStreamUrl = null;
+        let isStreaming = false;
+        const baseUrl = window.location.origin;
+
+        function updateStatus(message, isError = false) {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = 'status ' + (isError ? 'error' : 'connected');
+        }
+
+        function resetStreamState() {
+            const img = document.getElementById('streamImage');
+            
+            // 스트림 상태 먼저 초기화 (이벤트 핸들러가 실행되지 않도록)
+            isStreaming = false;
+            const oldUrl = currentStreamUrl;
+            currentStreamUrl = null;
+            
+            // 이미지 소스 완전히 제거
+            img.onload = null;
+            img.onerror = null;
+            img.src = '';
+            
+            // 빈 이미지로 강제 초기화
+            img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+            setTimeout(() => {
+                img.src = '';
+            }, 10);
+            
+            if (streamInterval) {
+                clearInterval(streamInterval);
+                streamInterval = null;
+            }
+
+            // 버튼 상태 초기화
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+        }
+
+        function startStream() {
+            const deviceId = document.getElementById('deviceId').value.trim();
+            if (!deviceId) {
+                alert('디바이스 ID를 입력해주세요.');
+                return;
+            }
+
+            // 이미 스트리밍 중이면 먼저 완전히 중지
+            if (isStreaming) {
+                resetStreamState();
+                // 상태 초기화를 위해 잠시 대기
+                setTimeout(() => {
+                    startStream();
+                }, 100);
+                return;
+            }
+
+            const img = document.getElementById('streamImage');
+            const streamUrl = `${baseUrl}/api/v1/cameras/${deviceId}/live-stream`;
+            
+            // 먼저 카메라 등록 여부 확인
+            updateStatus('카메라 정보 확인 중...', false);
+            document.getElementById('startBtn').disabled = true;
+            
+            fetch(`${baseUrl}/api/v1/cameras/${deviceId}`)
+                .then(response => {
+                    if (!response.ok) {
+                        if (response.status === 404) {
+                            updateStatus('❌ 등록되지 않은 디바이스 ID입니다', true);
+                            resetStreamState();
+                            return null;
+                        }
+                        throw new Error('카메라 정보 조회 실패');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (!data) {
+                        // 404 에러인 경우 이미 처리됨
+                        return;
+                    }
+                    
+                    if (data && data.success && data.data) {
+                        // 카메라가 등록되어 있으면 스트림 시작
+                        updateStatus('연결 중...', false);
+                        document.getElementById('startBtn').disabled = true;
+                        document.getElementById('stopBtn').disabled = false;
+                        
+                        // 이전 이벤트 핸들러 제거
+                        img.onload = null;
+                        img.onerror = null;
+                        
+                        // 새로운 이벤트 핸들러 설정
+                        img.onload = function() {
+                            if (isStreaming && img.src === currentStreamUrl) {
+                                updateStatus('✅ 스트림 연결됨', false);
+                            }
+                        };
+
+                        img.onerror = function() {
+                            if (isStreaming && img.src === currentStreamUrl) {
+                                updateStatus('❌ 스트림 연결 실패', true);
+                                resetStreamState();
+                            }
+                        };
+
+                        // 스트림 시작
+                        isStreaming = true;
+                        currentStreamUrl = streamUrl + '?t=' + Date.now();
+                        // 약간의 지연 후 스트림 시작 (상태 초기화 보장)
+                        setTimeout(() => {
+                            if (isStreaming) {
+                                img.src = currentStreamUrl;
+                            }
+                        }, 50);
+                    } else {
+                        updateStatus('❌ 카메라 정보를 가져올 수 없습니다', true);
+                        resetStreamState();
+                    }
+                })
+                .catch(error => {
+                    updateStatus('❌ 오류: ' + error.message, true);
+                    resetStreamState();
+                });
+        }
+
+        function stopStream() {
+            resetStreamState();
+            updateStatus('스트림 중지됨', false);
+        }
+
+        // 이벤트 리스너 등록 (CSP 호환 - 인라인 이벤트 핸들러 대신)
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('startBtn').addEventListener('click', startStream);
+            document.getElementById('stopBtn').addEventListener('click', stopStream);
+            
+            // 초기 상태 설정
+            updateStatus('디바이스 ID를 입력하고 스트림을 시작하세요', false);
+        });
+    </script>
+</body>
+</html>
+

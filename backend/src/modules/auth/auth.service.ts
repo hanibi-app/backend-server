@@ -23,7 +23,7 @@ export class AuthService {
     private readonly configService: ConfigService,
   ) {
     this.accessTokenExpiresIn = this.parseExpiration(
-      configService.get<string>('JWT_ACCESS_TOKEN_EXPIRATION', '900'),
+      configService.get<string>('JWT_ACCESS_TOKEN_EXPIRATION', '3600'),
     );
     this.refreshTokenExpiresIn = this.parseExpiration(
       configService.get<string>('JWT_REFRESH_TOKEN_EXPIRATION', '604800'),

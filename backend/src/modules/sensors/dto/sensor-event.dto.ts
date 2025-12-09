@@ -83,33 +83,16 @@ export class SensorEventDto {
   deviceId: string;
 
   @ApiProperty({
-    description: '이벤트 발생 시각 (ISO8601 형식, 선택사항 - 없으면 서버 수신 시간 사용)',
-    example: '2025-11-11T10:00:00.000Z',
-    required: false,
-  })
-  @IsISO8601()
-  @IsOptional()
-  timestamp?: string;
-
-  @ApiProperty({
     description: '이벤트 타입',
     enum: SensorEventType,
     example: SensorEventType.ProcessingCompleted,
+    enumName: 'SensorEventType',
   })
   @IsEnum(SensorEventType)
   eventType: SensorEventType;
 
   @ApiProperty({
-    description: '처리 세션 ID (선택, 일반적으로 불필요 - 백엔드가 자동 관리)',
-    example: '123',
-    required: false,
-  })
-  @IsString()
-  @IsOptional()
-  sessionId?: string;
-
-  @ApiProperty({
-    description: '이벤트 추가 데이터 (처리 완료 시 사용)',
+    description: '이벤트 추가 데이터 (선택사항, 현재는 사용하지 않음)',
     type: ProcessingSummaryDto,
     required: false,
   })

@@ -18,7 +18,7 @@ export class SensorsController {
   @UseInterceptors(RequestLoggingInterceptor)
   @ApiOperation({
     summary: '센서 데이터 수신',
-    description: '하드웨어가 주기적으로 센서 데이터를 전송할 때 호출합니다. timestamp와 sessionId는 선택사항입니다.',
+    description: '하드웨어가 주기적으로 센서 데이터를 전송할 때 호출합니다. processingStatus는 IDLE, PROCESSING, ERROR만 허용됩니다. 작업 완료는 /api/v1/sensors/events API를 사용하세요.',
   })
   @ApiBody({
     type: SensorDataDto,
@@ -67,6 +67,20 @@ export class SensorsController {
           processingStatus: 'PROCESSING',
         },
       },
+      idle: {
+        summary: '대기 상태 (IDLE)',
+        description: '작업이 끝나면 IDLE 상태로 전송합니다. COMPLETED는 사용하지 않습니다.',
+        value: {
+          deviceId: 'HANIBI-001',
+          sensorData: {
+            temperature: 20.0,
+            humidity: 45.0,
+            weight: 0.0,
+            gas: 0,
+          },
+          processingStatus: 'IDLE',
+        },
+      },
     },
   })
   async ingestSensorData(@Body() payload: SensorDataDto) {
@@ -93,7 +107,45 @@ export class SensorsController {
   @Post('events')
   @ApiOperation({
     summary: '센서 이벤트',
-    description: '처리 완료, 음식물 투입 등 주요 이벤트를 전달합니다.',
+    description: '처리 완료, 음식물 투입 등 주요 이벤트를 전달합니다. timestamp와 sessionId는 불필요합니다 (백엔드에서 자동 관리).',
+  })
+  @ApiBody({
+    type: SensorEventDto,
+    description: '이벤트 데이터',
+    examples: {
+      processingCompleted: {
+        summary: '작업 완료 이벤트',
+        description: '작업이 완료되었을 때 전송합니다. eventData는 선택사항이며 보내지 않아도 됩니다.',
+        value: {
+          deviceId: 'HANIBI-001',
+          eventType: 'PROCESSING_COMPLETED',
+        },
+      },
+      foodInputBefore: {
+        summary: '음식 투입 전 이벤트',
+        description: '음식을 투입하기 전에 전송합니다. eventData는 필요 없습니다.',
+        value: {
+          deviceId: 'HANIBI-001',
+          eventType: 'FOOD_INPUT_BEFORE',
+        },
+      },
+      foodInputAfter: {
+        summary: '음식 투입 후 이벤트',
+        description: '음식을 투입한 후에 전송합니다. eventData는 필요 없습니다.',
+        value: {
+          deviceId: 'HANIBI-001',
+          eventType: 'FOOD_INPUT_AFTER',
+        },
+      },
+      doorOpened: {
+        summary: '문 열림 이벤트',
+        description: '기기 문이 열렸을 때 전송합니다. eventData는 필요 없습니다.',
+        value: {
+          deviceId: 'HANIBI-001',
+          eventType: 'DOOR_OPENED',
+        },
+      },
+    },
   })
   async handleEvent(@Body() payload: SensorEventDto) {
     const result = await this.sensorsService.handleEvent(payload);
@@ -103,35 +155,6 @@ export class SensorsController {
     };
   }
 
-  @Post('events/food-input-before')
-  @ApiOperation({
-    summary: '음식물 투입 전 이벤트',
-  })
-  async handleFoodInputBefore(@Body() payload: SensorEventDto) {
-    const result = await this.sensorsService.handleEvent({
-      ...payload,
-      eventType: SensorEventType.FoodInputBefore,
-    });
-    return {
-      success: true,
-      ...result,
-    };
-  }
-
-  @Post('events/food-input-after')
-  @ApiOperation({
-    summary: '음식물 투입 후 이벤트',
-  })
-  async handleFoodInputAfter(@Body() payload: SensorEventDto) {
-    const result = await this.sensorsService.handleEvent({
-      ...payload,
-      eventType: SensorEventType.FoodInputAfter,
-    });
-    return {
-      success: true,
-      ...result,
-    };
-  }
 
   @Get(':deviceId/latest')
   @ApiOperation({
@@ -142,6 +165,45 @@ export class SensorsController {
     return {
       success: true,
       data,
+    };
+  }
+
+  @Get(':deviceId/data')
+  @ApiOperation({
+    summary: '날짜별 센서 데이터 조회',
+    description: '특정 디바이스의 특정 날짜 센서 데이터를 조회합니다.',
+  })
+  @ApiQuery({
+    name: 'date',
+    required: true,
+    description: '조회할 날짜 (YYYY-MM-DD 형식)',
+    example: '2025-12-09',
+  })
+  async getSensorDataByDate(
+    @Param('deviceId') deviceId: string,
+    @Query('date') date: string,
+  ) {
+    if (!date) {
+      return {
+        success: false,
+        message: 'date 파라미터가 필요합니다. (예: ?date=2025-12-09)',
+      };
+    }
+
+    const data = await this.sensorsService.getSensorDataByDate(deviceId, date);
+    return {
+      success: true,
+      deviceId,
+      date,
+      count: data.length,
+      data: data.map((item) => ({
+        id: item.id,
+        temperature: item.temperature,
+        humidity: item.humidity,
+        weight: item.weight,
+        gas: item.gas,
+        measuredAt: item.measuredAt,
+      })),
     };
   }
 

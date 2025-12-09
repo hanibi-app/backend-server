@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { plainToInstance } from 'class-transformer';
 import { DeepPartial, FindOptionsWhere, Repository } from 'typeorm';
@@ -60,6 +60,13 @@ export class SensorsService {
   async processSensorData(
     payload: SensorDataDto,
   ): Promise<{ data: SensorDataResponse; config: SensorConfigResponse }> {
+    // COMPLETED 상태는 /api/v1/sensors/events API를 사용해야 함
+    if (payload.processingStatus === ProcessingStatus.Completed) {
+      throw new BadRequestException(
+        'COMPLETED 상태는 /api/v1/sensors/events API를 사용하세요. 작업이 끝나면 IDLE 상태로 전송하세요.',
+      );
+    }
+
     const sanitizedValues = this.sanitizeSensorValues(payload.sensorData);
 
     // timestamp가 없으면 현재 시간 사용 (하드웨어 개발 편의성)
@@ -159,8 +166,8 @@ export class SensorsService {
   async handleEvent(payload: SensorEventDto): Promise<{ data: EventResponse }> {
     this.logger.log(`이벤트 수신: ${payload.eventType} (deviceId=${payload.deviceId})`);
 
-    // timestamp가 없으면 현재 시간 사용
-    const eventTime = payload.timestamp ? new Date(payload.timestamp) : new Date();
+    // 서버 수신 시간 사용 (하드웨어는 timestamp를 보내지 않음)
+    const eventTime = new Date();
 
     const device = await this.devicesService.findOrCreateByDeviceId(payload.deviceId);
 
@@ -259,8 +266,6 @@ export class SensorsService {
 
   private mapProcessingStatus(status: ProcessingStatus): DeviceStatus {
     switch (status) {
-      case ProcessingStatus.Completed:
-        return DeviceStatus.Completed;
       case ProcessingStatus.Error:
         return DeviceStatus.Error;
       case ProcessingStatus.Processing:
@@ -274,8 +279,6 @@ export class SensorsService {
     switch (status) {
       case ProcessingStatus.Processing:
         return 5;
-      case ProcessingStatus.Completed:
-        return 30;
       case ProcessingStatus.Idle:
         return 10;
       default:
@@ -311,27 +314,29 @@ export class SensorsService {
     device: Device,
     payload: SensorEventDto,
   ): Promise<void> {
-    if (!payload.eventData) {
-      return;
-    }
+    const completedAt = new Date();
 
+    // eventData가 있으면 사용, 없으면 null로 처리 세션 생성
     const session = this.processingSessionRepository.create({
       device,
       sessionStatus: ProcessingSessionStatus.Completed,
-      processedAmount: payload.eventData.processedAmount ?? null,
-      initialWeight: payload.eventData.initialWeight ?? null,
-      finalWeight: payload.eventData.finalWeight ?? null,
-      durationMinutes: payload.eventData.durationMinutes ?? null,
-      energyConsumed: payload.eventData.energyConsumed ?? null,
-      completedAt: payload.timestamp ? new Date(payload.timestamp) : new Date(),
+      processedAmount: payload.eventData?.processedAmount ?? null,
+      initialWeight: payload.eventData?.initialWeight ?? null,
+      finalWeight: payload.eventData?.finalWeight ?? null,
+      durationMinutes: payload.eventData?.durationMinutes ?? null,
+      energyConsumed: payload.eventData?.energyConsumed ?? null,
+      completedAt,
     } as DeepPartial<ProcessingSession>);
 
     await this.processingSessionRepository.save(session);
-    this.logProcessingSummary(payload.eventData);
+
+    if (payload.eventData) {
+      this.logProcessingSummary(payload.eventData);
+    }
 
     await this.characterQueueProducer.enqueueCharacterState({
       deviceId: device.deviceId,
-      triggeredAt: payload.timestamp ?? new Date().toISOString(),
+      triggeredAt: completedAt.toISOString(),
       stateRuleId: undefined,
     });
 
@@ -364,6 +369,40 @@ export class SensorsService {
       order: { createdAt: 'DESC' },
       take: Math.min(limit, 500),
     });
+  }
+
+  async getSensorDataByDate(
+    deviceId: string,
+    date: string,
+  ): Promise<SensorData[]> {
+    this.logger.debug(`센서 데이터 조회: deviceId=${deviceId}, date=${date}`);
+
+    const device = await this.devicesService.findOrCreateByDeviceId(deviceId);
+
+    // 날짜 파싱 (YYYY-MM-DD 형식)
+    const targetDate = new Date(date);
+    if (isNaN(targetDate.getTime())) {
+      throw new BadRequestException('유효하지 않은 날짜 형식입니다. YYYY-MM-DD 형식을 사용하세요.');
+    }
+
+    // 해당 날짜의 시작과 끝 계산 (UTC 기준)
+    const startOfDay = new Date(targetDate);
+    startOfDay.setUTCHours(0, 0, 0, 0);
+
+    const endOfDay = new Date(targetDate);
+    endOfDay.setUTCHours(23, 59, 59, 999);
+
+    const sensorData = await this.sensorDataRepository
+      .createQueryBuilder('sensor')
+      .where('sensor.device_id = :deviceId', { deviceId: device.id })
+      .andWhere('sensor.measuredAt >= :startOfDay', { startOfDay })
+      .andWhere('sensor.measuredAt <= :endOfDay', { endOfDay })
+      .orderBy('sensor.measuredAt', 'ASC')
+      .getMany();
+
+    this.logger.debug(`조회된 센서 데이터 개수: ${sensorData.length}`);
+
+    return sensorData;
   }
 }
 

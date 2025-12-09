@@ -33,7 +33,12 @@ export const generalRateLimiter = rateLimit({
   legacyHeaders: false,
   skip: (req) => {
     // 센서 API는 제외
-    return req.path.includes('/sensors');
+    if (req.path.includes('/sensors')) return true;
+    // 정적 파일은 제외
+    if (req.path.startsWith('/public/')) return true;
+    // Swagger 문서는 제외
+    if (req.path.startsWith('/docs')) return true;
+    return false;
   },
 });
 

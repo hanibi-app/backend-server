@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -6,6 +6,7 @@ import { User } from '../users/entities/user.entity';
 import { DevicesService } from './devices.service';
 import { PairDeviceDto } from './dto/pair-device.dto';
 import { SendCommandDto } from './dto/send-command.dto';
+import { UnpairDeviceDto } from './dto/unpair-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
 
 @ApiTags('Devices')
@@ -22,6 +23,16 @@ export class DevicesController {
   @ApiOperation({ summary: '기기 페어링' })
   async pairDevice(@CurrentUser() user: User, @Body() payload: PairDeviceDto) {
     const device = await this.devicesService.pairDevice(user, payload);
+    return {
+      success: true,
+      data: device,
+    };
+  }
+
+  @Delete('pair')
+  @ApiOperation({ summary: '기기 페어링 해제' })
+  async unpairDevice(@CurrentUser() user: User, @Body() payload: UnpairDeviceDto) {
+    const device = await this.devicesService.unpairDevice(user, payload.deviceId);
     return {
       success: true,
       data: device,

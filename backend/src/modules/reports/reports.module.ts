@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { DevicesModule } from '../devices/devices.module';
 import { Device } from '../devices/entities/device.entity';
 import { ProcessingSession } from '../processing/entities/processing-session.entity';
+import { SensorData } from '../sensors/entities/sensor-data.entity';
 import { LifeScoreFormula } from './entities/life-score-formula.entity';
 import { TimeseriesStats } from './entities/timeseries-stats.entity';
 import { ReportsController } from './reports.controller';
@@ -13,7 +14,7 @@ import { TimeseriesService } from './services/timeseries.service';
 @Module({
   imports: [
     DevicesModule,
-    TypeOrmModule.forFeature([ProcessingSession, Device, LifeScoreFormula, TimeseriesStats]),
+    TypeOrmModule.forFeature([ProcessingSession, Device, LifeScoreFormula, TimeseriesStats, SensorData]),
   ],
   controllers: [ReportsController],
   providers: [EcoScoreService, ReportsService, TimeseriesService],

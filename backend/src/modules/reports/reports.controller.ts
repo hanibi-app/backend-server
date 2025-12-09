@@ -1,5 +1,5 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { User } from '../users/entities/user.entity';
@@ -123,6 +123,22 @@ export class ReportsController {
         endDate: end.toISOString(),
         rankings,
       },
+    };
+  }
+
+  @Get(':type')
+  @ApiOperation({ summary: '센서 데이터 타임시리즈 리포트' })
+  @ApiParam({ name: 'type', enum: ['temp', 'humidity', 'weight', 'voc'], description: '센서 타입' })
+  @ApiQuery({ name: 'range', enum: ['1일', '1주일', '1개월', '1년'], required: false, description: '시간 범위' })
+  async getTimeseriesReport(
+    @CurrentUser() user: User,
+    @Param('type') type: 'temp' | 'humidity' | 'weight' | 'voc',
+    @Query('range') range: '1일' | '1주일' | '1개월' | '1년' = '1일',
+  ) {
+    const data = await this.reportsService.getTimeseriesData(user.id, type, range);
+    return {
+      success: true,
+      data,
     };
   }
 

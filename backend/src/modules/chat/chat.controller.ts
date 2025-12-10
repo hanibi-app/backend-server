@@ -67,10 +67,13 @@ export class ChatController {
     @Param('deviceId') deviceId: string,
     @Param('commandId') commandId: string,
   ) {
-    const message = await this.chatService.executeQuickCommand(user, deviceId, commandId);
+    const { userMessage, assistantMessage } = await this.chatService.executeQuickCommand(user, deviceId, commandId);
     return {
       success: true,
-      data: message,
+      data: {
+        userMessage,
+        assistantMessage,
+      },
     };
   }
 }

@@ -72,3 +72,4 @@ PATCH /api/v1/devices/ETCOM-001/commands/abc123-def456-ghi789/ack
 - `/ack` 엔드포인트는 디바이스가 명령을 성공적으로 처리했는지 확인하는 용도
 
 
+
